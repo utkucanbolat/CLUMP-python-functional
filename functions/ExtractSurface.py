@@ -1,6 +1,7 @@
-import subprocess
 import numpy as np
 from scipy.spatial import ConvexHull
+from utils.MyCrust.MyRobustCrust import MyRobustCrust
+import pyvista as pv
 
 """
 Tesselation of the surface of a clump into a surface mesh
@@ -77,7 +78,7 @@ def ExtractSurface(clump, N_sphere, N_circle):
     #                                   Main Body of the Function                                  #
     ################################################################################################
 
-    # the matlab function deal maps right hand side to left. it simply is:
+    # the matlab function "deal" maps right hand side to left. it simply is:
     x, y, z, r = zip(*clump)
     spheresList = clump
 
@@ -157,42 +158,25 @@ def ExtractSurface(clump, N_sphere, N_circle):
         vertices = np.vstack((vertices, S_struct[i]['vertices']))
     vertices = np.unique(vertices, axis=0).real
 
-    np.savetxt("temp.csv", vertices, delimiter=",")  # write the vertices for the binary to read
+    """# Utku - Instead of Powercrust Algorithm (MyCrust Implementation) I used pyvista's surface construction
 
-    # Generate mesh using the Crust algorithm (Amenta et al, 1999)
-    # Since the Crust algorithm has not yet been implemented in Python when this code was being implemented, I used the binaries of the powercrust algorithm
-    binary_path = "../utils/crust_algorithm"
-    file_name = "temp.csv"
-    subprocess.run(["sudo", "-S", binary_path + "/run_MyRobustCrust.sh", file_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                   input='password\n')
+    cloud = pv.PolyData(vertices)
+    surf = cloud.reconstruct_surface(nbr_sz=10)
 
-    # read faces
-    faces = np.genfromtxt(file_name, delimiter=',')
+    faces = surf.faces
+    # You can now visualize or save the mesh using PyVista
+    surf.plot()
 
-    return faces, vertices
+    return faces, vertices"""
 
 
-N_sphere = 400
-N_circle = 200
-clump = np.array([[1, 0, 0, 1.1],
-                  [2, 1, 0, 1.1],
-                  [3, 0, 0, 1.2]])
-faces, vertices = ExtractSurface(clump, N_sphere, N_circle)
 
-import numpy as np
-from mpl_toolkits import mplot3d
-import matplotlib.pyplot as plt
+if __name__ == "__main__":
+    N_sphere = 400
+    N_circle = 200
 
-# Define the vertices and faces of the 3D image
+    clump = np.array([[1, 0, 0, 1.1],
+                      [2, 1, 0, 1.1],
+                      [3, 0, 0, 1.2]])
 
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-
-ax.plot_trisurf(vertices[:,0], vertices[:,1], vertices[:,2], triangles=faces, color='grey', alpha=0.5)
-# check the triangles array for out-of-bounds vertex indices
-min_vertex_index = np.min(faces)
-max_vertex_index = np.max(faces)
-if min_vertex_index < 0 or max_vertex_index >= len(vertices):
-    raise ValueError('triangles array contains out-of-bounds vertex indices')
-plt.show()
+    ExtractSurface(clump, N_sphere, N_circle)
