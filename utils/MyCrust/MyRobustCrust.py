@@ -13,7 +13,7 @@ def MyRobustCrust(p):
         raise ValueError("Input 3D points must be stored in a Nx3 array")
 
     # Turn p to numpy array. It is trimesh object. It should work without this but still...
-    # And sort the array
+    # And sort the array to make it same with the MATLAB version
     p = np.array(p)
     sorted_indices = np.argsort(p[:, 0])
     p = p[sorted_indices]
