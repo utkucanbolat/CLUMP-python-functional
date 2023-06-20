@@ -1,11 +1,9 @@
 import numpy as np
 import time
 import trimesh
-from scipy.spatial import Delaunay
-import pyvista as pv
 import scipy.io
 import warnings
-
+from scipy.spatial import Delaunay
 
 def MyRobustCrust(p):
     # error check
