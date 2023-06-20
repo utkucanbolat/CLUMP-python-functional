@@ -534,7 +534,8 @@ def matlab_delaunayn(x):
 
 
 if __name__ == "__main__":
-    mat = scipy.io.loadmat('p.mat')
-    p = np.array(mat['p'])
+    # I save the p matrix from MATLAB workspace to check if this particular module works or not.
+    mat = scipy.io.loadmat('p.mat')  # load p from the workspace
+    p = np.array(mat['p'])  # convert p to numpy array
 
-    faces, _ = MyRobustCrust(p)
+    faces, _ = MyRobustCrust(p)  # run the code
