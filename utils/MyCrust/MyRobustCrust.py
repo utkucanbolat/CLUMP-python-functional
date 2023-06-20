@@ -5,6 +5,7 @@ import scipy.io
 import warnings
 from scipy.spatial import Delaunay
 
+
 def MyRobustCrust(p):
     # error check
     if len(p.shape) > 2 or p.shape[1] != 3:
