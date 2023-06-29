@@ -1,9 +1,12 @@
 import numpy as np
 import time
 import trimesh
+from scipy.spatial import Delaunay
+import pyvista as pv
 import scipy.io
 import warnings
-from scipy.spatial import Delaunay
+import subprocess
+import numpy.linalg as la
 
 
 def MyRobustCrust(p):
@@ -11,7 +14,9 @@ def MyRobustCrust(p):
     if len(p.shape) > 2 or p.shape[1] != 3:
         raise ValueError("Input 3D points must be stored in a Nx3 array")
 
-    # Sort the array to make it same with the MATLAB version
+    # Turn p to numpy array. It is trimesh object. It should work without this but still...
+    # And sort the array
+    p = np.array(p)
     sorted_indices = np.argsort(p[:, 0])
     p = p[sorted_indices]
 
@@ -29,8 +34,14 @@ def MyRobustCrust(p):
     # find triangles to tetrahedron and tetrahedron to triangles connectivity data
     start = time.time()
 
+    """mat = scipy.io.loadmat('tetr.mat')
+    tetr = np.array(mat['tetr'])"""
+
     t2tetr, tetr2t, t = Connectivity(tetr)  # Connectivity not working because of p. so delaunay needs to be corrected
     print(f'Connectivity Time: {time.time() - start} s')
+
+    """mat = scipy.io.loadmat('p.mat')
+    p = np.array(mat['p_circum'])"""
 
     start = time.time()
     cc, r = CC(p, tetr)  # Circumcenters of tetrahedrons
@@ -44,6 +55,14 @@ def MyRobustCrust(p):
     t = t[tbound]
     # del tetr, tetr2t, t2tetr
 
+    mat = scipy.io.loadmat('t.mat')
+    t = np.array(mat['t'])
+
+    t = t - 1  # INDEXING CONVENTION
+
+    mat = scipy.io.loadmat('p.mat')
+    p = np.array(mat['p'])
+
     start = time.time()
     t, tnorm = ManifoldExtraction(t, p)
     print(f'Manifold extraction Time: {time.time() - start} s')
@@ -51,42 +70,44 @@ def MyRobustCrust(p):
     return t, tnorm
 
 
-def CC(p, tetr):
-    tetr = tetr - 1
-    ntetr = tetr.shape[0]
-    r = np.zeros(ntetr)
-    cc = np.zeros((ntetr, 3))
+def CC(points, tetrahedra):
+    # Initialize arrays for circumcenters and radii
+    circumcenters = np.zeros((tetrahedra.shape[0], 3))
+    radii = np.zeros(tetrahedra.shape[0])
 
-    p1 = p[tetr[:, 0], :]
-    p2 = p[tetr[:, 1], :]
-    p3 = p[tetr[:, 2], :]
-    p4 = p[tetr[:, 3], :]
+    # Calculate circumcenter and radius for each tetrahedron
+    for i, tetrahedron in enumerate(tetrahedra):
+        # Extract the points of the tetrahedron
+        p1, p2, p3, p4 = points[tetrahedron]
 
-    v21 = p1 - p2
-    v31 = p3 - p1
-    v41 = p4 - p1
+        # Compute vectors between points
+        v21 = p1 - p2
+        v31 = p3 - p1
+        v41 = p4 - p1
 
-    d1 = np.sum(v41 * (p1 + p4) * .5, axis=1)
-    d2 = np.sum(v21 * (p1 + p2) * .5, axis=1)
-    d3 = np.sum(v31 * (p1 + p3) * .5, axis=1)
+        # Compute auxiliary determinants
+        d1 = np.dot(v41, 0.5 * (p1 + p4))
+        d2 = np.dot(v21, 0.5 * (p1 + p2))
+        d3 = np.dot(v31, 0.5 * (p1 + p3))
 
-    det23 = v21[:, 1] * v31[:, 2] - v21[:, 2] * v31[:, 1]
-    det13 = v21[:, 2] * v31[:, 0] - v21[:, 0] * v31[:, 2]
-    det12 = v21[:, 0] * v31[:, 1] - v21[:, 1] * v31[:, 0]
+        # Compute main determinant
+        det23 = v21[1] * v31[2] - v21[2] * v31[1]
+        det13 = v21[2] * v31[0] - v21[0] * v31[2]
+        det12 = v21[0] * v31[1] - v21[1] * v31[0]
 
-    Det = v41[:, 0] * det23 + v41[:, 1] * det13 + v41[:, 2] * det12
+        Det = v41[0] * det23 + v41[1] * det13 + v41[2] * det12
 
-    detx = d1 * det23 + v41[:, 1] * (-(d2 * v31[:, 2]) + v21[:, 2] * d3) + v41[:, 2] * ((d2 * v31[:, 1]) - v21[:, 1] * d3)
-    dety = v41[:, 0] * ((d2 * v31[:, 2]) - v21[:, 2] * d3) + d1 * det13 + v41[:, 2] * ((d3 * v21[:, 0]) - v31[:, 0] * d2)
-    detz = v41[:, 0] * ((v21[:, 1] * d3) - d2 * v31[:, 1]) + v41[:, 1] * (d2 * v31[:, 0] - v21[:, 0] * d3) + d1 * det12
+        # Compute circumcenter coordinates
+        circumcenter_x = (d1 * det23 + v41[1] * (d3 * v21[2] - d2 * v31[2]) + v41[2] * (d2 * v31[1] - d3 * v21[1])) / Det
+        circumcenter_y = (v41[0] * (d3 * v21[2] - d2 * v31[2]) + d1 * det13 + v41[2] * (d2 * v31[0] - d3 * v21[0])) / Det
+        circumcenter_z = (v41[0] * (d3 * v21[1] - d2 * v31[1]) + v41[1] * (d2 * v31[0] - d3 * v21[0]) + d1 * det12) / Det
 
-    cc[:, 0] = detx / Det
-    cc[:, 1] = dety / Det
-    cc[:, 2] = detz / Det
+        circumcenters[i] = [circumcenter_x, circumcenter_y, circumcenter_z]
 
-    r[:] = np.sqrt(np.sum((p2 - cc[:, :]) ** 2, axis=1))
+        # Compute circumradius
+        radii[i] = np.sqrt(np.sum((p2 - circumcenters[i]) ** 2))
 
-    return cc, r
+    return circumcenters, radii
 
 
 def Connectivity(tetr):
@@ -111,24 +132,32 @@ def Connectivity(tetr):
 
 
 def Marking(p, tetr, tetr2t, t2tetr, cc, r, nshield):
-    TOLLDIFF = 0.01
-    INITTOLL = 0.99
+    # constants for the algorithm
+    TOLLDIFF = .01
+    INITTOLL = .99
     MAXLEVEL = 10 / TOLLDIFF
     BRUTELEVEL = MAXLEVEL - 50
 
-    n_p = p.shape[0] - nshield
+    # preallocation
+    np_ = p.shape[0] - nshield
     numtetr = tetr.shape[0]
     nt = tetr2t.shape[0]
 
-    deleted = np.any(tetr > n_p, axis=1)
-    checked = np.copy(deleted)
+    # First flag as outside tetrahedrons with Shield points
+    deleted = np.any(tetr > np_, axis=1)
+    checked = deleted.copy()
     onfront = np.zeros(nt, dtype=bool)
-    onfront[t2tetr[checked]] = True
+
+    for i in np.where(checked)[0]:
+        onfront[t2tetr[i, :]] = True
+
     countchecked = np.sum(checked)
 
-    toll = np.zeros(nt) + INITTOLL
+    # tolerances to mark as in or out
+    toll = np.full(nt, INITTOLL)
     level = 0
 
+    # intersection factor
     Ifact = IntersectionFactor(tetr2t, cc, r)
 
     ids = np.arange(nt)
@@ -136,53 +165,63 @@ def Marking(p, tetr, tetr2t, t2tetr, cc, r, nshield):
     nt = len(queue)
     while countchecked < numtetr and level < MAXLEVEL:
         level += 1
+
         for i in range(nt):
-            id = queue[i]
-            tetr1 = tetr2t[id, 0]
-            tetr2 = tetr2t[id, 1]
-            if tetr2 == 0:
-                onfront[id] = False
+            id_ = queue[i]
+            tetr1, tetr2 = tetr2t[id_]
+
+            if tetr2 == 0 or (checked[tetr1] and checked[tetr2]):
+                onfront[id_] = False
                 continue
-            elif checked[tetr1] and checked[tetr2]:
-                onfront[id] = False
-                continue
-            if Ifact[id] >= toll[id]:
+
+            if Ifact[id_] >= toll[id_]:  # flag as equal
                 if checked[tetr1]:
                     deleted[tetr2] = deleted[tetr1]
                     checked[tetr2] = True
                     countchecked += 1
-                    onfront[t2tetr[tetr2, :]] = True
+                    onfront[t2tetr[tetr2]] = True
                 else:
                     deleted[tetr1] = deleted[tetr2]
                     checked[tetr1] = True
                     countchecked += 1
-                    onfront[t2tetr[tetr1, :]] = True
-                onfront[id] = False
-            elif Ifact[id] < -toll[id]:
+                    onfront[t2tetr[tetr1]] = True
+                onfront[id_] = False
+
+            elif Ifact[id_] < -toll[id_]:  # flag as different
                 if checked[tetr1]:
                     deleted[tetr2] = not deleted[tetr1]
                     checked[tetr2] = True
                     countchecked += 1
-                    onfront[t2tetr[tetr2, :]] = True
+                    onfront[t2tetr[tetr2]] = True
                 else:
                     deleted[tetr1] = not deleted[tetr2]
                     checked[tetr1] = True
                     countchecked += 1
-                    onfront[t2tetr[tetr1, :]] = True
-                onfront[id] = False
+                    onfront[t2tetr[tetr1]] = True
+                onfront[id_] = False
+
             else:
-                toll[id] -= TOLLDIFF
+                toll[id_] -= TOLLDIFF
+
         if level == BRUTELEVEL:
-            warnings.warn('Brute continuation necessary')
-            onfront[t2tetr[~checked, :]] = True
+            print('Brute continuation necessary')
+            onfront[np.any(t2tetr[~checked], axis=0)] = True
+
         queue = ids[onfront]
         nt = len(queue)
 
-    tbound = BoundTriangles(tetr2t, deleted) # BoundTriangles is not defined in the provided code
+    # extract boundary triangles
+    tbound = BoundTriangles(tetr2t, deleted)
+
     if level == MAXLEVEL:
-        warnings.warn(f'{level} th level was reached')
+        print(f'{level} th level was reached')
+    else:
+        print(f'{level} th level was reached')
+
+    print(f'{countchecked / numtetr * 100:.4f} % of tetrahedrons were checked')
 
     return tbound, Ifact
+
 
 def AddShield(p):
     # Find the bounding box
@@ -270,63 +309,80 @@ def IntersectionFactor(tetr2t, cc, r):
     return Ifact
 
 
+def TriAngle(p1, p2, p3, p4, planenorm):
+    v21 = p1 - p2
+    v31 = p3 - p1
+    tnorm1 = np.cross(v21, v31)
+    tnorm1 /= la.norm(tnorm1)
+
+    v41 = p4 - p1
+    tnorm2 = np.cross(v21, v41)
+    tnorm2 /= la.norm(tnorm2)
+    alpha = np.dot(tnorm1, tnorm2)
+    alpha = np.arccos(alpha)
+
+    if np.dot(planenorm, p4 - p3) < 0:
+        alpha = alpha + 2 * (np.pi - alpha)
+
+    if np.dot(planenorm, tnorm1) > 0:
+        tnorm2 = -tnorm2
+
+    return alpha, tnorm2
+
+
 def ManifoldExtraction(t, p):
-    # Given a set of triangles,
-    # Builds a manifold surface with the ball pivoting method.
-
-    # building the etmap
     numt = t.shape[0]
-    vect = np.arange(numt)  # Triangle indices
-    e = np.vstack((t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]))  # Edges - not unique
-    e = np.unique(np.sort(e, axis=1), axis=0)  # Unique edges
+    vect = np.arange(numt)
+    e = np.vstack([t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]])
+    e, j = np.unique(np.sort(e, axis=1), axis=0, return_inverse=True)
 
-    te = np.vstack((e[vect], e[vect + numt], e[vect + 2 * numt]))
+    # Unique edges
+    te = np.vstack([j[vect], j[vect + numt], j[vect + 2 * numt]]).T
     nume = e.shape[0]
     e2t = np.zeros((nume, 2), dtype=np.int32)
-
     ne = e.shape[0]
-    # np_ = p.shape[0]
-
-    count = np.zeros(ne, dtype=np.int32)  # numero di triangoli candidati per edge
+    np_ = p.shape[0]
+    count = np.zeros(ne, dtype=np.int32)
     etmapc = np.zeros((ne, 4), dtype=np.int32)
 
     for i in range(numt):
-        i1 = te[i, 0]
-        i2 = te[i, 1]
-        i3 = te[i, 2]
+        i1, i2, i3 = te[i, :]
 
-        etmapc[i1, 1 + count[i1]] = i
-        etmapc[i2, 1 + count[i2]] = i
-        etmapc[i3, 1 + count[i3]] = i
+        etmapc[i1, count[i1]] = i
+        etmapc[i2, count[i2]] = i
+        etmapc[i3, count[i3]] = i
 
         count[i1] += 1
         count[i2] += 1
         count[i3] += 1
 
-    etmap = [etmapc[i, :count[i]].tolist() for i in range(ne)]
+    etmap = [etmapc[i, :count[i]] for i in range(ne)]
 
-    tkeep = np.full((numt,), False)  # all'inizio nessun trinagolo selezionato
+    tkeep = np.zeros(numt, dtype=bool)
+    efront = np.zeros(nume, dtype=np.int32)
 
-    # Start the front
-    # building the queue to store edges on front that need to be studied
-    efront = np.zeros(nume, dtype=np.int32)  # exstimate length of the queue
+    tnorm = Tnorm(p, t)
 
-    # Intilize the front
-    tnorm = Tnorm(p, t)  # get triangles normals
-
-    # find the highest triangle
     t1 = np.argmax((p[t[:, 0], 2] + p[t[:, 1], 2] + p[t[:, 2], 2]) / 3)
 
     if tnorm[t1, 2] < 0:
-        tnorm[t1, :] = -tnorm[t1, :]  # punta verso l'alto
+        tnorm[t1, :] *= -1  # SKIPPED. SOMEWHAT UNCESSARY
 
-    tkeep[t1] = True  # primo triangolo selezionato
+    tkeep[t1] = True
     efront[:3] = te[t1, :3]
     e2t[te[t1, :3], 0] = t1
-    nf = 3  # efront iterato
+    nf = 3
 
+    co = 0
+    # assuming TriAngle function has been defined properly somewhere
     while nf > 0:
-        k = efront[nf - 1]  # id edge on front
+        co += 1
+        if co % 1000 == 0: print(co)
+
+        if co == 10:
+            break
+
+        k = efront[nf]  # id edge on front
 
         if e2t[k, 1] > 0 or e2t[k, 0] < 1 or count[k] < 2:  # edge is no more on front or it has no candidates triangles
             nf -= 1
@@ -338,33 +394,31 @@ def ManifoldExtraction(t, p):
         t1 = e2t[k, 0]  # triangle we come from
 
         # get data structure
-        # p1
-        # / | \
-        # t1 p3 e1 p4 t2(idt)
-        # \ | /
-        # p2
-        alphamin = float('inf')  # inizilizza
+        alphamin = float('inf')  # initialize
         ttemp = t[t1, :]
         etemp = e[k, :]
         p1 = etemp[0]
         p2 = etemp[1]
-        p3 = ttemp[(ttemp != p1) & (ttemp != p2)][0]  # terzo id punto
 
-        for i in idtcandidate:
-            t2 = i
+        # p3 = ttemp[(ttemp != p1) & (ttemp != p2)][0]  # third point id
+        p3 = ttemp[np.all([ttemp != p1, ttemp != p2], axis=0)][0]
+
+        for i in range(len(idtcandidate)):
+            t2 = idtcandidate[i]
             if t2 == t1:
                 continue
 
             ttemp = t[t2, :]
-            p4 = ttemp[(ttemp != p1) & (ttemp != p2)][0]  # terzo id punto
+            # p4 = ttemp[(ttemp != p1) & (ttemp != p2)][0]
+            p4 = ttemp[np.all([ttemp != p1, ttemp != p2], axis=0)][0]  # third point id
 
-            # calcola l'angolo fra i triangoli e prendi il minimo
+            # calculate the angle between the triangles and take the minimum
             alpha, tnorm2 = TriAngle(p[p1, :], p[p2, :], p[p3, :], p[p4, :], tnorm[t1, :])
 
             if alpha < alphamin:
                 alphamin = alpha
-                idt = t2
-                tnorm[t2, :] = tnorm2  # ripristina orientazione
+                idt = t2  # ??????
+                tnorm[t2, :] = tnorm2  # restore orientation
 
         # update front according to idttriangle
         tkeep[idt] = True
@@ -372,79 +426,37 @@ def ManifoldExtraction(t, p):
             ide = te[idt, j]
 
             if e2t[ide, 0] < 1:  # Is it the first triangle for the current edge?
-                efront[nf - 1] = ide
+                efront[nf] = ide
                 nf += 1
                 e2t[ide, 0] = idt
             else:  # no, it is the second one
-                efront[nf - 1] = ide
+                efront[nf] = ide
                 nf += 1
                 e2t[ide, 1] = idt
 
-        nf -= 1  # per evitare di scappare avanti nella coda e trovare uno zero
+        nf -= 1  # to avoid running ahead in the queue and finding a zero
 
     t = t[tkeep, :]
     tnorm = tnorm[tkeep, :]
+
     return t, tnorm
-
-
-def TriAngle(p1, p2, p3, p4, planenorm):
-    # First, we see if p4 is above or below the plane identified
-    # by the normal planenorm and the point p3
-
-    test = np.sum(planenorm * p4 - planenorm * p3)
-
-    # Computes angle between two triangles
-    v21 = p1 - p2
-    v31 = p3 - p1
-
-    # normals to triangles
-    tnorm1 = np.cross(v21, v31)
-    tnorm1 /= np.linalg.norm(tnorm1)
-
-    v41 = p4 - p1
-
-    # normals to triangles
-    tnorm2 = np.cross(v21, v41)
-    tnorm2 /= np.linalg.norm(tnorm2)
-
-    alpha = np.dot(tnorm1, tnorm2)  # cosine of the angle
-
-    # The cosine considers the angle between the subplanes and not the triangles, it tells us
-    # that the planes are at 180 if alpha = -1 they are in agreement if alpha = 1, at 90 °
-
-    alpha = np.arccos(alpha)  # find the angle
-
-    # If p4 is above the plane the angle is the right one otherwise it must be increased
-    # by 2 * (180-alpha);
-    if test < 0:  # p4 is under, we increase
-        alpha += 2 * (np.pi - alpha)
-
-    # We see if we need to change the orientation of the second triangle
-    # as we have calculated them now tnorm1 t tnorm2 do not respect
-    # orientation
-    testor = np.sum(planenorm * tnorm1)
-    if testor > 0:
-        tnorm2 = -tnorm2
-
-    return alpha, tnorm2
 
 
 def Tnorm(p, t):
     # Computes normalized normals of triangles
 
-    v21 = p[t[:, 0], :] - p[t[:, 1], :]
-    v31 = p[t[:, 2], :] - p[t[:, 0], :]
+    v21 = p[t[:, 0]] - p[t[:, 1]]
+    v31 = p[t[:, 2]] - p[t[:, 0]]
 
-    tnorm1 = np.empty_like(v21)
-    tnorm1[:, 0] = v21[:, 1] * v31[:, 2] - v21[:, 2] * v31[:, 1]  # normals to triangles
+    tnorm1 = np.zeros(t.shape)
+
+    tnorm1[:, 0] = v21[:, 1] * v31[:, 2] - v21[:, 2] * v31[:, 1]
     tnorm1[:, 1] = v21[:, 2] * v31[:, 0] - v21[:, 0] * v31[:, 2]
     tnorm1[:, 2] = v21[:, 0] * v31[:, 1] - v21[:, 1] * v31[:, 0]
 
     L = np.sqrt(np.sum(tnorm1 ** 2, axis=1))
 
-    tnorm1[:, 0] /= L
-    tnorm1[:, 1] /= L
-    tnorm1[:, 2] /= L
+    tnorm1 = tnorm1 / L[:, None]
 
     return tnorm1
 
@@ -465,6 +477,22 @@ def merge_duplicate_points(X):
         dupes_found = True
 
     return X, dupes_found, idx_map
+
+
+def run_qhull(points):
+    points_str = '\n'.join(' '.join(str(x) for x in point) for point in points)
+    input_data = f"{len(points)}\n3\n{points_str}".encode()
+    proc = subprocess.Popen(["./qhull", "d", "Qt", "Qbb", "Qc", "Fv"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    output, _ = proc.communicate(input_data)
+
+    # convert output from bytes to string
+    output_str = output.decode()
+    # convert string to list of lists, and convert to integers
+    output_list = [list(map(int, line.split()[1:])) for line in output_str.split('\n')[1:] if line]
+    # convert list of lists to numpy array of integers
+    output_array = np.array(output_list, dtype=int)
+
+    return output_array
 
 
 def matlab_delaunayn(x):
@@ -506,23 +534,26 @@ def matlab_delaunayn(x):
 
         return t
 
-    t = Delaunay(x, qhull_options="Qt Qbb Qc")
+    # t = Delaunay(x, qhull_options="Qt Qbb Qc")  # Scipy's qhull
+    # t = t.simplices
+
+    t = run_qhull(x)  # My qhull
 
     # Strip the zero volume simplices that may have been created by the presence of degeneracy
-    mt, nt = t.simplices.shape
+    mt, nt = t.shape
     v = np.ones(mt, dtype=bool)
 
     for i in range(mt):
-        xa = x[t.simplices[i, :nt - 1]]
-        xb = x[t.simplices[i, nt - 1]]
+        xa = x[t[i, :nt - 1]]
+        xb = x[t[i, nt - 1]]
 
-        val = abs(np.linalg.det(xa - xb))
-        valtol = np.finfo(float).eps * max(abs(np.concatenate((xa.flatten(), xb.flatten()))))
+        val = np.abs(np.linalg.det(xa - xb))
+        valtol = np.finfo(float).eps * np.max(np.abs(np.concatenate((xa.flatten(), xb.flatten()))))
 
         if val <= valtol:
             v[i] = False
 
-    t = t.simplices[v]
+    t = t[v]
 
     if dupesfound:
         t = idxmap[t]
@@ -531,8 +562,7 @@ def matlab_delaunayn(x):
 
 
 if __name__ == "__main__":
-    # I save the p matrix from MATLAB workspace to check if this particular module works or not.
-    mat = scipy.io.loadmat('p.mat')  # load p from the workspace
-    p = np.array(mat['p'])  # convert p to numpy array
+    mat = scipy.io.loadmat('p.mat')
+    p = np.array(mat['p'])
 
-    faces, _ = MyRobustCrust(p)  # run the code
+    faces, _ = MyRobustCrust(p)
