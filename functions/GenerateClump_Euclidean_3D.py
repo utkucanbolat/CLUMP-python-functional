@@ -4,6 +4,7 @@ import utils.RigidBodyParameters as RigidBodyParameters
 import utils.STLReader as STLReader
 from scipy.ndimage import distance_transform_edt
 
+
 """
 Clump generator using the Euclidean map for voxelated, 3D particles 
 2020 © V. Angelidakis, S. Nadimi, M. Otsubo, S. Utili.
@@ -51,14 +52,14 @@ def clumpGenerator_Euclidean_3D(stlFile, N, rMin, div, overlap, **kwargs):
                     mesh.inertia
                     mesh.inertiaPrincipal
                     mesh.orientationsPrincipal
-                
+
             clump:	structure containing all relevant clump parameters
                     clump.positions		:	M-by-3 matrix containing the position of each generated sphere.
                     clump.radii			:	M-by-1 vector containing the radius of each generated sphere
                     clump.minRadius		:	Minimum generated sphere (might differ from rmin)
                     clump.maxRadius		:	Maximum generated sphere
                     clump.numSpheres	:	Total number of spheres
-                
+
             output: txt file with centroids and radii, with format: [x,y,z,r]
     """
 
@@ -67,12 +68,14 @@ def clumpGenerator_Euclidean_3D(stlFile, N, rMin, div, overlap, **kwargs):
     ################################################################################################
 
     clump = Clump()  # instentiate Clump object for later use
-    F, P = STLReader.read_stl(stlFile)  # read the STL file and get faces and vertices
 
+    # F, P = STLReader.read_stl(stlFile)  # read the STL file and get faces and vertices
     # Build "mesh" structure
-    mesh = RigidBodyParameters.RBP(F, P)  # calculate the rigid body parameters based on F and P.
+    # mesh = RigidBodyParameters.RBP(F, P)  # calculate the rigid body parameters based on F and P.
 
-    trimesh_mesh = trimesh.load_mesh(stlFile)  # this will be used for voxalization
+    mesh = trimesh.load_mesh(stlFile)  # this will be used for voxalization
+    F = mesh.faces
+    P = mesh.vertices
 
     # Calculate extreme coordinates & centroid of the AABB of the particle
     minX, minY, minZ = np.min(P[:, 0]), np.min(P[:, 1]), np.min(P[:, 2])
@@ -89,9 +92,9 @@ def clumpGenerator_Euclidean_3D(stlFile, N, rMin, div, overlap, **kwargs):
         (np.abs(maxX - minX), np.abs(maxY - minY), np.abs(maxZ - minZ)))  # find the shortest length of axes
     voxel_size = min_AABB / div  # determine the voxel size
 
-    img_temp = trimesh_mesh.voxelized(pitch=voxel_size, method="subdivide").fill()  # voxalize
+    img_temp = mesh.voxelized(pitch=voxel_size, method="subdivide").fill()  # voxalize
 
-    intersection = np.pad(img_temp, ((2, 2), (2, 2), (2, 2)), mode='constant')  # pad the array with 2 voxels
+    intersection = np.pad(np.array(img_temp.matrix), ((2, 2), (2, 2), (2, 2)), mode='constant') # pad the array with 2 voxels
 
     # I skipped the part "Ensure the voxel size is the same in all 3 directions -> Might be an overkill, but still".
     # Maybe add it later - Utku
@@ -110,7 +113,6 @@ def clumpGenerator_Euclidean_3D(stlFile, N, rMin, div, overlap, **kwargs):
 
         if radius < rMin:
             print(f"The mimimum radius rMin={rMin} has been met using {k - 1} spheres")
-            break
 
         xyzCenter = np.argwhere(edtImage == radius)
 
